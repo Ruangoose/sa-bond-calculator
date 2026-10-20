@@ -61,6 +61,32 @@ This is how South African desks price over-the-counter options on government bon
   - theta: rand per calendar day, from the time-decay term alone (there is no discounting to decay);
   - yield delta: rand for a 1 basis-point rise in the spot yield.
 
+## Option strategies
+- **Legs.** A structure is several options on the same bond, expiry and repo rate, each bought or sold in a
+  ratio, with its own strike and, if wanted, its own volatility.
+- **Premium and Greeks.** The structure's are the legs' sums, with sold legs counted negative. A positive net
+  premium is paid; a negative one is received.
+- **Payoff at expiry.** The sum over legs of ratio × (intrinsic value at the delivery price − premium), per
+  contract of the structure. It is linear in the bond's all-in price between strikes, so:
+  - breakevens are solved exactly on each linear piece, then turned into yields with the JSE formula;
+  - the maximum profit and loss sit on a strike, or are uncapped if the payoff keeps sloping beyond the outer
+    strikes (calls above them, puts below).
+- **Built-in structures.** Their strikes are placed in basis points of yield from the at-the-money strike (the
+  forward yield, rounded to a basis point):
+
+| Structure | Legs (offset from at the money, bp) |
+|---|---|
+| Call / Put | buy call 0 / buy put 0 |
+| Call spread | buy call 0, sell call −25 |
+| Put spread | buy put 0, sell put +25 |
+| Risk reversal | buy call −25, sell put +25 |
+| Straddle | buy call 0, buy put 0 |
+| Strangle | buy call −25, buy put +25 |
+| Fence | sell call −50, buy call 0, sell put +50 |
+| Butterfly | buy call −20, sell call 0, sell put 0, buy put +20 |
+
+A call is on price, so a strike yield below the forward is an out-of-the-money call.
+
 ## How it's checked
 - **The JSE's examples.** `tests/test_jse_examples.py` reproduces both worked examples in the
   specification:

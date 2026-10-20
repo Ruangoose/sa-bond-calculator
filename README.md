@@ -9,6 +9,9 @@ South African government bonds, priced the way the market prices them:
 - **Options:** Black (1976) on the bond's forward all-in price, with Greeks. The strike is quoted as a
   yield and the volatility as a price volatility, as South African desks quote over-the-counter bond
   options.
+- **Strategies:** spreads, straddles, strangles, risk reversals, fences and butterflies. The package gives
+  their net premium and Greeks, their payoff at expiry, exact breakevens, and the maximum profit and loss
+  (or that they're uncapped).
 
 It needs only the Python standard library. The tests check the package against both worked examples
 in the JSE's specification, to the last printed digit of every rounded result.
@@ -35,6 +38,11 @@ implied_yield(r2035, settle, p.aip)  # back to 9.40
 # A call on R2035 expiring with the February 2027 futures: strike 9.50%, carry 7.25%, price vol 11%
 o = bond_option(r2035, date(2026, 10, 20), date(2027, 2, 4), 9.40, 9.50, 7.25, 0.11, "call")
 o.premium, o.delta, o.vega, o.theta  # rand per R100,000 contract
+
+# A fence around the same strike: sell a call 50bp below, buy one at 9.50%, sell a put 50bp above
+from sabond import strategy_legs, value_strategy
+s = value_strategy(r2035, date(2026, 10, 20), date(2027, 2, 4), 9.40, 7.25, 0.11, strategy_legs("Fence", 9.50))
+s.net_premium, s.delta, s.vega, s.breakevens, s.max_profit, s.max_loss  # None means uncapped
 ```
 
 ## Rerun everything from a clean clone
@@ -78,6 +86,7 @@ It imports the bond table from `web/bonds.js`, which `scripts/make_vectors.py` w
 | `src/sabond/jse.py` | The JSE Bond Pricing Formula |
 | `src/sabond/carry.py` | Forwards, futures fair value, futures dates |
 | `src/sabond/options.py` | Black (1976) and bond options |
+| `src/sabond/strategies.py` | Option strategies: legs, net Greeks, payoff at expiry |
 | `src/sabond/bonds.py` | The bonds in issue, with sources |
 | `src/sabond/calendar.py` | Business days and T+3 settlement |
 | `tests/` | pytest suite, including the JSE's worked examples |

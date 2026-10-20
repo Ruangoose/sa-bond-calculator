@@ -6,13 +6,20 @@ from .carry import Forward, forward, futures_delivery, futures_expiries, futures
 from .jse import NoConvergence, Price, accrued_interest, implied_yield, price, timing
 from .normal import norm_cdf, norm_pdf
 from .options import BondOption, black76, bond_option, price_vol_from_yield_vol
+from .strategies import STRATEGIES, Leg, Strategy, payoff, strategy_legs, value_strategy
 
 __all__ = [
     "BONDS",
     "REDEMPTION_DATES",
+    "STRATEGIES",
     "Bond",
     "BondOption",
     "Forward",
+    "Leg",
+    "Strategy",
+    "payoff",
+    "strategy_legs",
+    "value_strategy",
     "NoConvergence",
     "Price",
     "accrued_interest",

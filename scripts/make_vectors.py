@@ -25,14 +25,19 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from sabond import (  # noqa: E402
     BONDS,
+    STRATEGIES,
+    Leg,
     bond_option,
     forward,
     futures_delivery,
     futures_expiries,
     futures_expiry,
     implied_yield,
+    payoff,
     price,
     settlement_date,
+    strategy_legs,
+    value_strategy,
 )
 from sabond.jse import _on  # noqa: E402
 from sabond.rounding import round_half_up  # noqa: E402
@@ -145,6 +150,43 @@ def option_vectors(rng):
     return rows
 
 
+def strategy_row(s):
+    """A Strategy as plain data, each leg's option flattened to the fields the page shows."""
+    keep = ("strike_aip", "premium", "delta", "gamma", "vega", "theta", "yield_vol", "yield_delta")
+    row = {k: (iso(v) if isinstance(v, date) else v) for k, v in asdict(s).items() if k != "legs"}
+    row["breakevens"] = list(s.breakevens)
+    row["legs"] = [{"kind": v.kind, "side": v.side, "ratio": v.ratio, "strike_yield": v.strike_yield,
+                    "weight": v.weight, "premium": v.premium, "delta": v.delta, "gamma": v.gamma, "vega": v.vega,
+                    "theta": v.theta, "option": {k: getattr(v.option, k) for k in keep}} for v in s.legs]
+    return row
+
+
+def strategy_vectors(rng):
+    rows = []
+    for bond in BONDS.values():
+        trade = START + timedelta(days=rng.randrange(0, 600))
+        settle = settlement_date(trade)
+        for expiry in futures_expiries(trade, 3)[1:]:
+            if futures_delivery(expiry) >= bond.maturity:
+                continue
+            spot, carry, vol = rng.choice(YIELDS[5:-4]), rng.choice([6.5, 7.25, 8.1]), rng.choice([0.03, 0.08, 0.13])
+            f = forward(bond, settle, futures_delivery(expiry), spot, carry)
+            atm = round_half_up(f.ytm, 2)
+            for name in STRATEGIES:
+                legs = strategy_legs(name, atm)
+                if rng.random() < 0.2:  # sometimes a leg with its own volatility, or a ratio
+                    legs[0] = Leg(legs[0].kind, legs[0].side, 2, legs[0].strike_yield, vol * 1.15)
+                s = value_strategy(bond, trade, expiry, spot, carry, vol, legs)
+                row = strategy_row(s)
+                row["inputs"] = {"bond": bond.code, "trade_date": iso(trade), "expiry": iso(expiry), "spot": spot,
+                                 "carry": carry, "vol": vol, "name": name,
+                                 "legs": [asdict(leg) for leg in legs]}
+                ys = [round(atm - 1.5 + 0.25 * k, 2) for k in range(13)]
+                row["payoffs"] = [[y, payoff(s, bond, y)] for y in ys]
+                rows.append(row)
+    return rows
+
+
 def plain(obj):
     """A dataclass result as JSON-ready data, dates as ISO strings."""
     def conv(v):
@@ -168,6 +210,9 @@ EXAMPLE = {
     "kind": "call",
     "price_vol": 0.08,
 }
+
+
+EXAMPLE_STRATEGY = "Call spread"
 
 
 def curve_range(ytm):
@@ -207,6 +252,22 @@ def example(counts):
         opt_curve.append([s, oi.premium, oi.delta, max(gain, 0) * oi.notional / 100])
     opt = plain(o)
     opt.pop("forward")
+
+    # The strategy section's worked example: a call spread around the same at-the-money strike.
+    legs = strategy_legs(EXAMPLE_STRATEGY, strike)
+    st = value_strategy(bond, e["trade_date"], expiry, e["ytm"], e["carry"], e["price_vol"], legs)
+    ks = [leg.strike_yield for leg in legs]
+    lo_s, hi_s = round(min(ks) - 1.5, 2), round(max(ks) + 1.5, 2)
+    n = int(round((hi_s - lo_s) / 0.02))
+    pay_curve = [[round(lo_s + i * 0.02, 2), payoff(st, bond, round(lo_s + i * 0.02, 2))] for i in range(n + 1)]
+    first = int((min(ks) - 0.75) * 4 + 0.999999) / 4  # quarter points, from 75bp below the lowest strike
+    table = []
+    y = first
+    while y <= max(ks) + 0.75 + 1e-9:
+        table.append({"y": y, "aip": price(bond, st.delivery, y).aip_r, "pnl": payoff(st, bond, y)})
+        y = round(y + 0.25, 2)
+    strategy = {"name": EXAMPLE_STRATEGY, **strategy_row(st),
+                "curve": {"x_min": lo_s, "x_max": hi_s, "points": pay_curve}, "table": table}
     return {
         "generated_by": "scripts/make_vectors.py",
         "inputs": {**{k: (iso(v) if isinstance(v, date) else v) for k, v in e.items()}, "settle": iso(settle),
@@ -220,6 +281,7 @@ def example(counts):
         "option": opt,
         "option_curve": {"atm_spot": atm_spot, "x_min": opt_curve[0][0], "x_max": opt_curve[-1][0],
                          "points": opt_curve},
+        "strategy": strategy,
         "vector_counts": counts,
     }
 
@@ -250,6 +312,7 @@ def build():
         "calendar": calendar_vectors(),
         "forwards": forward_vectors(rng),
         "options": option_vectors(rng),
+        "strategies": strategy_vectors(rng),
     }
     counts = {
         "prices": len(vectors["prices"]),
@@ -257,6 +320,7 @@ def build():
         "dates": len(vectors["calendar"]["settlement"]) + len(vectors["calendar"]["futures"]),
         "forwards": len(vectors["forwards"]),
         "options": len(vectors["options"]),
+        "strategies": len(vectors["strategies"]),
     }
     counts["total"] = sum(counts.values())
     return (bonds_js(), json.dumps(vectors, separators=(",", ":")) + "\n",
@@ -277,7 +341,7 @@ def main():
     v = json.loads(vec)
     print(f"Wrote web/bonds.js, web/example.json and web/vectors.json ({len(vec) / 1e6:.2f} MB): {len(v['prices'])} prices, "
           f"{len(v['yields'])} yields, {len(v['calendar']['settlement'])} settlement dates, "
-          f"{len(v['forwards'])} forwards, {len(v['options'])} options.")
+          f"{len(v['forwards'])} forwards, {len(v['options'])} options, {len(v['strategies'])} strategies.")
 
 
 if __name__ == "__main__":

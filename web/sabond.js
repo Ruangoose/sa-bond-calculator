@@ -404,3 +404,108 @@ export function bondOption(bond, tradeDate, expiry, spotYield, strikeYield, carr
 export function priceVolFromYieldVol(yieldVol, forwardDmod, forwardYtm) {
   return (yieldVol * forwardDmod * forwardYtm) / 100;
 }
+
+// ---- Option strategies (as in strategies.py) --------------------------------------------------
+
+const leg = (kind, side, ratio, offset_bp) => ({ kind, side, ratio, offset_bp });
+export const STRATEGIES = {
+  "Call": [leg("call", 1, 1, 0)],
+  "Put": [leg("put", 1, 1, 0)],
+  "Call spread": [leg("call", 1, 1, 0), leg("call", -1, 1, -25)],
+  "Put spread": [leg("put", 1, 1, 0), leg("put", -1, 1, 25)],
+  "Risk reversal": [leg("call", 1, 1, -25), leg("put", -1, 1, 25)],
+  "Straddle": [leg("call", 1, 1, 0), leg("put", 1, 1, 0)],
+  "Strangle": [leg("call", 1, 1, -25), leg("put", 1, 1, 25)],
+  "Fence": [leg("call", -1, 1, -50), leg("call", 1, 1, 0), leg("put", -1, 1, 50)],
+  "Butterfly": [leg("call", 1, 1, -20), leg("call", -1, 1, 0), leg("put", -1, 1, 0), leg("put", 1, 1, 20)],
+};
+
+export function strategyLegs(name, atmStrike) {
+  return STRATEGIES[name].map((s) => ({
+    kind: s.kind, side: s.side, ratio: s.ratio, strike_yield: roundHalfUp(atmStrike + s.offset_bp / 100, 2),
+    price_vol: null,
+  }));
+}
+
+export function payoffAtPrice(legs, priceAtDelivery, notional) {
+  let total = 0;
+  for (const l of legs) {
+    const k = l.option.strike_aip;
+    const gain = l.kind === "call" ? priceAtDelivery - k : k - priceAtDelivery;
+    total += l.weight * ((Math.max(gain, 0) * notional) / 100 - l.option.premium);
+  }
+  return total;
+}
+
+export function payoff(strategy, bond, expiryYield) {
+  const p = price(bond, strategy.delivery, expiryYield).aip_r;
+  return payoffAtPrice(strategy.legs, p, strategy.notional);
+}
+
+export function valueStrategy(bond, tradeDate, expiry, spotYield, carryRate, priceVol, legs,
+  { notional = 100000, spotSettle = null, window = null, extraHolidays = [] } = {}) {
+  bond = bondOf(bond);
+  spotSettle = spotSettle ?? settlementDate(tradeDate, extraHolidays);
+  const delivery = addBusinessDays(expiry, 3, extraHolidays);
+  const values = legs.map((l) => {
+    const vol = l.price_vol == null ? priceVol : l.price_vol;
+    const o = bondOption(bond, tradeDate, expiry, spotYield, l.strike_yield, carryRate, vol, l.kind,
+      { notional, spotSettle, delivery, extraHolidays });
+    const w = l.side * l.ratio;
+    return { kind: l.kind, side: l.side, ratio: l.ratio, strike_yield: l.strike_yield, option: o, weight: w,
+      premium: w * o.premium, delta: w * o.delta, gamma: w * o.gamma, vega: w * o.vega, theta: w * o.theta };
+  });
+  const total = (f) => { let s = 0; for (const v of values) s += f(v); return s; };
+
+  const strikesY = legs.map((l) => l.strike_yield);
+  const [loY, hiY] = window ?? [Math.min(...strikesY) - 3, Math.max(...strikesY) + 3];
+  const pHi = price(bond, delivery, loY).aip_r;
+  const pLo = price(bond, delivery, hiY).aip_r;
+  const vertices = [...new Set([pLo, pHi, ...values.map((v) => v.option.strike_aip).filter((k) => pLo < k && k < pHi)])]
+    .sort((a, b) => a - b);
+  const pay = vertices.map((p) => payoffAtPrice(values, p, notional));
+  const slopeHigh = total((v) => (v.kind === "call" ? (v.weight * notional) / 100 : 0));
+  const slopeLow = -total((v) => (v.kind === "put" ? (v.weight * notional) / 100 : 0));
+  const eps = 1e-9;
+  const profitUncapped = slopeLow < -eps || slopeHigh > eps;
+  const lossUncapped = slopeLow > eps || slopeHigh < -eps;
+  const yieldAt = (p) => impliedYield(bond, delivery, p);
+
+  const breakevens = new Set();
+  pay.forEach((v, i) => {
+    if (v === 0) breakevens.add(yieldAt(vertices[i]));
+    if (i + 1 < vertices.length && v * pay[i + 1] < 0) {
+      const t = -v / (pay[i + 1] - v);
+      breakevens.add(yieldAt(vertices[i] + t * (vertices[i + 1] - vertices[i])));
+    }
+  });
+  // Where the payoff is flat, several vertices tie to within floating-point noise; take the one nearest
+  // the strikes (the edge of the flat stretch), as the Python does.
+  const middle = total((v) => v.option.strike_aip) / values.length;
+  const pick = (target) => {
+    let out = -1;
+    pay.forEach((v, i) => {
+      if (Math.abs(v - target) > 1e-6) return;
+      if (out < 0 || Math.abs(vertices[i] - middle) < Math.abs(vertices[out] - middle)) out = i;
+    });
+    return out;
+  };
+  const best = pick(Math.max(...pay));
+  const worst = pick(Math.min(...pay));
+  return {
+    bond: bond.code, trade_date: toISO(toDay(tradeDate)), expiry: toISO(toDay(expiry)), delivery, notional,
+    legs: values,
+    net_premium: total((v) => v.premium),
+    delta: total((v) => v.delta),
+    gamma: total((v) => v.gamma),
+    vega: total((v) => v.vega),
+    theta: total((v) => v.theta),
+    yield_delta: total((v) => v.weight * v.option.yield_delta),
+    delta_nominal: total((v) => v.delta) * notional,
+    breakevens: [...breakevens].sort((a, b) => a - b),
+    max_profit: profitUncapped ? null : pay[best],
+    max_loss: lossUncapped ? null : pay[worst],
+    max_profit_yield: profitUncapped ? null : yieldAt(vertices[best]),
+    max_loss_yield: lossUncapped ? null : yieldAt(vertices[worst]),
+  };
+}

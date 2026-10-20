@@ -82,6 +82,36 @@ test(`options: ${V.options.length} vectors, premiums to the cent and far closer`
   console.log(`  largest premium difference: R${worst.toExponential(2)} per contract`);
 });
 
+const STRAT_EXACT = new Set(["breakevens", "max_profit_yield", "max_loss_yield", "notional", "delivery", "trade_date",
+  "expiry", "bond"]);
+
+function compareStrategy(a, e, label) {
+  const { legs, inputs, payoffs, curve, table, name, ...rest } = e;
+  compare(a, rest, STRAT_EXACT, label);
+  for (const k of ["max_profit", "max_loss"]) {
+    if (e[k] === null) assert.equal(a[k], null, `${label} ${k}`);
+  }
+  assert.equal(a.legs.length, legs.length);
+  legs.forEach((l, i) => {
+    const { option, ...lrest } = l;
+    compare(a.legs[i], lrest, new Set(["kind", "side", "ratio", "strike_yield", "weight"]), `${label} leg ${i}`);
+    compare(a.legs[i].option, option, new Set(["strike_aip"]), `${label} leg ${i} option`);
+  });
+}
+
+test(`strategies: ${V.strategies.length} vectors`, () => {
+  for (const e of V.strategies) {
+    const i = e.inputs;
+    const label = `${i.bond} ${i.name} ${i.expiry}`;
+    const a = sb.valueStrategy(i.bond, i.trade_date, i.expiry, i.spot, i.carry, i.vol, i.legs);
+    compareStrategy(a, e, label);
+    for (const [y, p] of e.payoffs) close(sb.payoff(a, i.bond, y), p, `${label} payoff ${y}`);
+  }
+  // The built-in structures' legs, from an at-the-money strike.
+  assert.deepEqual(sb.strategyLegs("Fence", 9.52).map((l) => [l.kind, l.side, l.strike_yield]),
+    [["call", -1, 9.02], ["call", 1, 9.52], ["put", -1, 10.02]]);
+});
+
 test("the website's worked example (example.json)", () => {
   const E = JSON.parse(readFileSync(new URL("./example.json", import.meta.url), "utf8"));
   const i = E.inputs;
@@ -103,6 +133,14 @@ test("the website's worked example (example.json)", () => {
     close(oi.delta, delta, `option curve delta ${s}`);
     const gain = i.kind === "call" ? oi.forward.aip - oi.strike_aip : oi.strike_aip - oi.forward.aip;
     close(Math.max(gain, 0) * oi.notional / 100, intrinsic, `option curve intrinsic ${s}`);
+  }
+  const S = E.strategy;
+  const st = sb.valueStrategy(i.bond, i.trade_date, i.expiry, i.ytm, i.carry, i.price_vol, sb.strategyLegs(S.name, i.strike));
+  compareStrategy(st, S, "example strategy");
+  for (const [y, p] of S.curve.points) close(sb.payoff(st, i.bond, y), p, `strategy curve ${y}`);
+  for (const r of S.table) {
+    assert.equal(sb.price(i.bond, st.delivery, r.y).aip_r, r.aip);
+    close(sb.payoff(st, i.bond, r.y), r.pnl, `strategy table ${r.y}`);
   }
 });
 
