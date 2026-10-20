@@ -82,6 +82,28 @@ test(`options: ${V.options.length} vectors, premiums to the cent and far closer`
   console.log(`  largest premium difference: R${worst.toExponential(2)} per contract`);
 });
 
+test("the website's worked example (example.json)", () => {
+  const E = JSON.parse(readFileSync(new URL("./example.json", import.meta.url), "utf8"));
+  const i = E.inputs;
+  assert.equal(sb.settlementDate(i.trade_date), i.settle);
+  compare(sb.price(i.bond, i.settle, i.ytm, i.nominal), E.price, PRICE_EXACT, "example price");
+  for (const [y, aip] of E.curve.points) close(sb.price(i.bond, i.settle, y).aip, aip, `curve ${y}`);
+  assert.deepEqual(sb.futuresExpiries(i.trade_date, 4), E.expiries);
+  const f = sb.forward(i.bond, i.settle, sb.futuresDelivery(i.expiry), i.ytm, i.carry);
+  const { coupons, ...frest } = E.forward;
+  compare(f, frest, FWD_EXACT, "example forward");
+  assert.equal(f.coupons.length, coupons.length);
+  const o = sb.bondOption(i.bond, i.trade_date, i.expiry, i.ytm, i.strike, i.carry, i.price_vol, i.kind);
+  compare(o, E.option, OPT_EXACT, "example option");
+  for (const [s, premium, delta, intrinsic] of E.option_curve.points) {
+    const oi = sb.bondOption(i.bond, i.trade_date, i.expiry, s, i.strike, i.carry, i.price_vol, i.kind);
+    close(oi.premium, premium, `option curve premium ${s}`);
+    close(oi.delta, delta, `option curve delta ${s}`);
+    const gain = i.kind === "call" ? oi.forward.aip - oi.strike_aip : oi.strike_aip - oi.forward.aip;
+    close(Math.max(gain, 0) * oi.notional / 100, intrinsic, `option curve intrinsic ${s}`);
+  }
+});
+
 test("rounding matches the specification's rule", () => {
   assert.equal(sb.roundHalfUp(131.648461227743, 5), 131.64846);
   assert.equal(sb.roundHalfUp(2.5, 0), 3);
