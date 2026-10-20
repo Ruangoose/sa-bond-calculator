@@ -194,9 +194,13 @@ def example(counts):
     f = forward(bond, settle, futures_delivery(expiry), e["ytm"], e["carry"])
     strike = round_half_up(f.ytm, 2)  # at the money forward, to the basis point
     o = bond_option(bond, e["trade_date"], expiry, e["ytm"], strike, e["carry"], e["price_vol"], e["kind"])
+    # The spot yield at which the option is at the money: where the forward price equals the strike.
+    # The chart centres on it, since its axis is the spot yield and the strike is a forward yield.
+    carried = 1 + e["carry"] / 100 * f.days / 365
+    atm_spot = implied_yield(bond, settle, (o.strike_aip + f.coupon_value) / carried)
     opt_curve = []
     for i in range(201):
-        s = round(strike - 2 + i * 0.02, 2)
+        s = round(atm_spot - 2 + i * 0.02, 2)
         oi = bond_option(bond, e["trade_date"], expiry, s, strike, e["carry"], e["price_vol"], e["kind"])
         gain = oi.forward.aip - oi.strike_aip if e["kind"] == "call" else oi.strike_aip - oi.forward.aip
         # Intrinsic value against the forward, per contract: Black's value at zero volatility.
@@ -214,7 +218,8 @@ def example(counts):
         "expiries": [iso(x) for x in expiries],
         "forward": plain(f),
         "option": opt,
-        "option_curve": {"x_min": strike - 2, "x_max": strike + 2, "points": opt_curve},
+        "option_curve": {"atm_spot": atm_spot, "x_min": opt_curve[0][0], "x_max": opt_curve[-1][0],
+                         "points": opt_curve},
         "vector_counts": counts,
     }
 

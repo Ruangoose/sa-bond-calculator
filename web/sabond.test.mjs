@@ -95,6 +95,8 @@ test("the website's worked example (example.json)", () => {
   assert.equal(f.coupons.length, coupons.length);
   const o = sb.bondOption(i.bond, i.trade_date, i.expiry, i.ytm, i.strike, i.carry, i.price_vol, i.kind);
   compare(o, E.option, OPT_EXACT, "example option");
+  const carried = 1 + (i.carry / 100) * f.days / 365;
+  assert.equal(sb.impliedYield(i.bond, i.settle, (o.strike_aip + f.coupon_value) / carried), E.option_curve.atm_spot);
   for (const [s, premium, delta, intrinsic] of E.option_curve.points) {
     const oi = sb.bondOption(i.bond, i.trade_date, i.expiry, s, i.strike, i.carry, i.price_vol, i.kind);
     close(oi.premium, premium, `option curve premium ${s}`);
