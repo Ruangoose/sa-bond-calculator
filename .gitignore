@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+node_modules/
+# Source PDFs are linked from SOURCES.md, not copied in.
+*.pdf
