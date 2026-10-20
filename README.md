@@ -53,10 +53,36 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python -m pytest
 .\.venv\Scripts\python scripts\make_vectors.py --check
-node --test web
+node --test web/sabond.test.mjs
 ```
 
-On macOS or Linux, use `python3.12 -m venv .venv` and `.venv/bin/python`.
+On macOS or Linux, run `./check.sh`. It needs Python 3.12 and Node 20 or later.
+
+## In the browser
+
+`web/sabond.js` is an ES module with the same functions (in camelCase) and the same result fields:
+
+```js
+import { price, bondOption, settlementDate } from "./sabond.js";
+
+const p = price("R2035", settlementDate("2026-10-20"), 9.4);
+const o = bondOption("R2035", "2026-10-20", "2027-02-04", 9.4, 9.5, 7.25, 0.11, "call");
+```
+
+It imports the bond table from `web/bonds.js`, which `scripts/make_vectors.py` writes from the Python.
+
+## Layout
+
+| Path | What it is |
+|---|---|
+| `src/sabond/jse.py` | The JSE Bond Pricing Formula |
+| `src/sabond/carry.py` | Forwards, futures fair value, futures dates |
+| `src/sabond/options.py` | Black (1976) and bond options |
+| `src/sabond/bonds.py` | The bonds in issue, with sources |
+| `src/sabond/calendar.py` | Business days and T+3 settlement |
+| `tests/` | pytest suite, including the JSE's worked examples |
+| `scripts/make_vectors.py` | Writes `web/bonds.js` and the test vectors |
+| `web/` | The JavaScript port and its Node test |
 
 ## Method
 

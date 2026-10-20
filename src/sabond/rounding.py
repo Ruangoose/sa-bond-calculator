@@ -10,5 +10,5 @@ from decimal import ROUND_HALF_UP, Decimal
 
 
 def round_half_up(x: float, places: int) -> float:
-    """Round x to `places` decimal places, halves away from zero."""
-    return float(Decimal(repr(x)).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP))
+    """Round x to `places` decimal places, halves away from zero. Never returns -0.0."""
+    return float(Decimal(repr(x)).quantize(Decimal(1).scaleb(-places), rounding=ROUND_HALF_UP)) + 0.0
